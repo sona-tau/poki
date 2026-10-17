@@ -36,6 +36,7 @@
             # Add any you need here
             packages = with pkgs; [
               gum
+              git-bug
               self.formatter.${system}
             ];
 
