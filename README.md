@@ -1,6 +1,9 @@
 # Poki
 
-![pictogram of a container](https://raw.githubusercontent.com/lipu-linku/ijo/main/sitelenpona/static/poki-1.svg)
+<div align="center">
+  <img src="https://raw.githubusercontent.com/lipu-linku/ijo/main/sitelenpona/static/poki-1.svg" width="50%" alt="pictogram of a container">
+</div>
+
 
 Poki is a program that lets you create C workspaces created with three core tenets:
 
