@@ -39,7 +39,7 @@ emit "$PROJECT_DIRECTORY/flake.nix" <<'END_OF_TEMPLATE'
   outputs =
     inputs@{ self, nixpkgs }:
     let
-      version = "@@VERSION@@";
+      p = builtins.fromTOML (builtins.readFile ./project.toml);
       # The systems supported for this flake
       supportedSystems = [
         "x86_64-linux" # 64-bit Intel/AMD Linux
@@ -69,8 +69,8 @@ emit "$PROJECT_DIRECTORY/flake.nix" <<'END_OF_TEMPLATE'
       packages = forEachSupportedSystem (
         { pkgs }: {
           default = pkgs.stdenv.mkDerivation {
-            pname = "@@NAME@@";
-            version = version;
+            pname = p.name;
+            inherit (p) version;
             src = ./.;
             __contentAddressed = true;
             doCheck = true;
@@ -119,13 +119,13 @@ emit "$PROJECT_DIRECTORY/flake.nix" <<'END_OF_TEMPLATE'
               mkdir -p $dev/lib
               cp .build/lib@@NAME@@.a $dev/lib/
 
-              mkdir -p $doc/share/doc/@@NAME@@
+              mkdir -p $doc/share/doc/${p.name}
               if [ -d .build/docs/html/ ]; then
-                cp -r .build/docs/html $doc/share/doc/@@NAME@@/html
+                cp -r .build/docs/html $doc/share/doc/${p.name}/html
               fi
 
-              cp README.md  $doc/share/doc/@@NAME@@/ 2>/dev/null || true
-              cp CHANGELOG.md  $doc/share/doc/@@NAME@@/ 2>/dev/null || true
+              cp README.md  $doc/share/doc/${p.name}/ 2>/dev/null || true
+              cp CHANGELOG.md  $doc/share/doc/${p.name}/ 2>/dev/null || true
 
               if [ -d .build/docs/man ]; then
                 mkdir -p $doc/share/man/man3
