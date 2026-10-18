@@ -110,14 +110,7 @@ emit "$PROJECT_DIRECTORY/flake.nix" <<'END_OF_TEMPLATE'
             installPhase = ''
               runHook preInstall
 
-              mkdir -p $out/lib
-              cp .build/lib@@NAME@@.so $out/lib/
-
-              mkdir -p $dev/include
-              cp include/@@NAME@@.h $dev/include
-
-              mkdir -p $dev/lib
-              cp .build/lib@@NAME@@.a $dev/lib/
+              PREFIX="" DESTDIR=$out ./nob install
 
               mkdir -p $doc/share/doc/${p.name}
               if [ -d .build/docs/html/ ]; then
@@ -133,22 +126,6 @@ emit "$PROJECT_DIRECTORY/flake.nix" <<'END_OF_TEMPLATE'
               fi
 
               runHook postInstall
-            '';
-
-            postInstall = ''
-              mkdir -p $dev/lib/pkgconfig
-              cat > $dev/lib/pkgconfig/@@NAME@@.pc <<EOF
-              prefix=$out
-              exec_prefix=''${prefix}
-              libdir=''${exec_prefix}/lib
-              includedir=$dev/include
-
-              Name: @@NAME@@
-              Description: @@DESCRIPTION@@
-              Version: ${version}
-              Cflags: -I''${includedir}
-              Libs: -L''${libdir} -l@@NAME@@
-              EOF
             '';
           };
         }
@@ -228,6 +205,8 @@ emit "$PROJECT_DIRECTORY/nob.c" <<'END_OF_TEMPLATE'
 
 #define SAN_FLAGS "-fsanitize=address,undefined"
 #define LNK_FLAGS "-L" LIB_DIR "/static", "-L" LIB_DIR "/dynamic", "-lm"
+
+#define t nob_temp_sprintf
 
 /* --- file collection helpers --- */
 
@@ -782,6 +761,96 @@ static bool cmd_ctags(void) {
   return nob_cmd_run(&cmd);
 }
 
+static int cmd_install(BuildKind kind) {
+  Nob_Cmd cmd = {0};
+  cmd_build(kind);
+
+  const char *prefix = getenv("PREFIX");
+  prefix = prefix == NULL ? "/usr/local" : prefix;
+  const char *destdir = getenv("DESTDIR");
+  destdir = destdir == NULL ? "" : destdir;
+  const char *version = manifest_get("version");
+  size_t len = strlen(version);
+  size_t count = 0;
+  for (size_t i = 0; i < len; ++i) {
+    if (version[i] == '.')
+      break;
+    count++;
+  }
+  const char *full = t("lib" NAME ".so.%s", version);
+  const char *major = t("lib" NAME ".so.%.*s", (int)count, version);
+  const char *simple = "lib" NAME ".so";
+
+  nob_cmd_append(&cmd, "install", "-d",
+                 t("%s%s/include/%s", destdir, prefix, manifest_get("author")),
+                 t("%s%s/lib", destdir, prefix),
+                 t("%s%s/lib/pkgconfig", destdir, prefix));
+  if (!nob_cmd_run(&cmd)) {
+    nob_log(NOB_ERROR, "Could not create directories:");
+    nob_log(NOB_ERROR, "- `%s%s/include/%s`", destdir, prefix,
+            manifest_get("author"));
+    nob_log(NOB_ERROR, "- `%s%s/lib`", destdir, prefix);
+    nob_log(NOB_ERROR, "- `%s%s/lib/pkgconfig`", destdir, prefix);
+    nob_log(NOB_ERROR, "errno: %s", strerror(errno));
+    return EXIT_FAILURE;
+  }
+
+  nob_cmd_append(
+      &cmd, "install", "-m", "644",
+      t("include/%s/" NAME ".h", manifest_get("author")),
+      t("%s%s/include/%s/", destdir, prefix, manifest_get("author")));
+  if (!nob_cmd_run(&cmd)) {
+    nob_log(NOB_ERROR, "Could not copy the headers:");
+    nob_log(NOB_ERROR, "`include/%s/" NAME ".h` -> `%s%s/include/%s/`",
+            manifest_get("author"), destdir, prefix, manifest_get("author"));
+    nob_log(NOB_ERROR, "errno: %s", strerror(errno));
+    return EXIT_FAILURE;
+  }
+
+  nob_cmd_append(&cmd, "install", "-m", "644", BUILD_DIR "/lib" NAME ".a",
+                 t("%s%s/lib/", destdir, prefix));
+  if (!nob_cmd_run(&cmd)) {
+    nob_log(NOB_ERROR, "Could not copy the static builds:");
+    nob_log(NOB_ERROR, "`" BUILD_DIR "/lib" NAME ".a` -> `%s%s/lib/`", destdir,
+            prefix);
+    nob_log(NOB_ERROR, "errno: %s", strerror(errno));
+    return EXIT_FAILURE;
+  }
+
+  nob_cmd_append(&cmd, "install", "-m", "644", t(BUILD_DIR "/%s", full),
+                 t("%s%s/lib/", destdir, prefix));
+  if (!nob_cmd_run(&cmd)) {
+    nob_log(NOB_ERROR, "Could not copy the dynamic builds:");
+    nob_log(NOB_ERROR, "`%s` -> `%s%s/lib/`", full, destdir, prefix);
+    nob_log(NOB_ERROR, "errno: %s", strerror(errno));
+    return EXIT_FAILURE;
+  }
+
+  nob_cmd_append(&cmd, "install", "-m", "644", BUILD_DIR "/" NAME ".pc",
+                 t("%s%s/lib/pkgconfig/", destdir, prefix));
+  if (!nob_cmd_run(&cmd)) {
+    nob_log(NOB_ERROR, "Could not copy the following:");
+    nob_log(NOB_ERROR, "`" BUILD_DIR "/" NAME ".pc` -> `%s%s/lib/pkgconfig/`",
+            destdir, prefix);
+    nob_log(NOB_ERROR, "errno: %s", strerror(errno));
+    return EXIT_FAILURE;
+  }
+
+  if (strcmp(major, full) != 0) {
+    int ret = symlink(full, t("%s%s/%s", destdir, prefix, major));
+    if (ret != 0)
+      fprintf(stderr, "could not create symlink: %s\n", strerror(errno));
+  }
+
+  if (strcmp(major, full) != 0) {
+    int ret = symlink(major, t("%s%s/%s", destdir, prefix, simple));
+    if (ret != 0)
+      fprintf(stderr, "could not create symlink: %s\n", strerror(errno));
+  }
+
+  return EXIT_SUCCESS;
+}
+
 /* --- usage --- */
 
 #define bold_text(str) "\033[1m" str "\033[22m"
@@ -812,6 +881,7 @@ static void usage(const char *program) {
   fprintf(stderr, "  "          "  " "  "bold_text("docs")",             "bold_text("--docs")"                Generate HTML & man docs in " BUILD_DIR "/docs/\n");
   fprintf(stderr, "  "          "  " "  "bold_text("pack")",             "bold_text("--pack")" [ver] [pfx]    Pack library as tar.gz (semver optional)\n");
   fprintf(stderr, "  "          "  " "  "bold_text("clean")",            "bold_text("--clean")"               Remove " BUILD_DIR "/\n");
+  fprintf(stderr, "  "          "  " "  "bold_text("install")",          "bold_text("--install")"             Install artifacts at $DESTDIR$PREFIX/\n");
   fprintf(stderr, "  "bold_text("-h")", "bold_text("help")",             "bold_text("--help")"                Print help\n");
   // clang-format on
 }
@@ -838,7 +908,8 @@ typedef enum {
   Documentation,
   Pack,
   Clean,
-  Fuzz
+  Fuzz,
+  Install
 } Cmd;
 
 #define test_flag_sl(_cmd, _short, _flag)                                      \
@@ -869,6 +940,7 @@ Cmd parse_cmd(const char *cmd) {
     : test_flag_l(cmd, "pack") ? Pack
     : test_flag_l(cmd, "clean") ? Clean
     : test_flag_sl(cmd, "f", "fuzz") ? Fuzz
+    : test_flag_l(cmd, "install") ? Install
     : Unknown;
   // clang-format on
 }
@@ -926,6 +998,8 @@ int main(int argc, char **argv) {
     return cmd_clean();
   case Fuzz:
     return cmd_fuzz();
+  case Install:
+    return cmd_install(ReleaseBuild);
   }
 }
 END_OF_TEMPLATE
