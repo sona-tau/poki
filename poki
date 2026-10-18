@@ -187,6 +187,7 @@ emit "$PROJECT_DIRECTORY/nob.c" <<'END_OF_TEMPLATE'
 
 #include <ctype.h>
 #include <string.h>
+#include <unistd.h>
 
 /* --- settings --- */
 
@@ -266,20 +267,20 @@ static bool collect_files(const char *dir, FileFilter filter,
 
 /* --- helpers --- */
 
-static const char *git_version(void) {
-  FILE *f = popen("git describe --tags --always --dirty 2>/dev/null", "r");
+static char *manifest_get(const char *want) {
+  FILE *f = fopen("project.toml", "r");
   if (!f)
-    return "unknown";
-  char buf[128] = {0};
-  if (!fgets(buf, sizeof(buf), f)) {
-    pclose(f);
-    return "unknown";
+    return NULL;
+  char line[512], key[32], value[256], *out = NULL;
+  while (fgets(line, sizeof line, f)) {
+    if (sscanf(line, " %31[^ =] = \"%255[^\"]\"", key, value) == 2 &&
+        strcmp(key, want) == 0) {
+      out = strdup(value);
+      break;
+    }
   }
-  pclose(f);
-  size_t n = strlen(buf);
-  if (n > 0 && buf[n - 1] == '\n')
-    buf[n - 1] = '\0';
-  return nob_temp_sprintf("%s", buf);
+  fclose(f);
+  return out;
 }
 
 /* --- semver --- */
@@ -321,9 +322,12 @@ static int build_objects(Nob_File_Paths *srcs, Nob_File_Paths *objs,
     o[len - 1] = 'o';
 
     Nob_Cmd cmd = {0};
+    // TODO: provide -DBUILD_INFO=+g<hash>-dirty to builds with git absent
     nob_cmd_append(&cmd, CC, BASE_FLAGS, "-fPIC",
-                   nob_temp_sprintf("-DVERSION=\"%s\"", git_version()), "-c",
-                   src, "-o", o);
+                   t("-DVERSION=\"%s\"", manifest_get("version")),
+                   t("-DDESCRIPTION=\"%s\"", manifest_get("description")),
+                   t("-DPROJECT_NAME=\"%s\"", manifest_get("name")), "-c", src,
+                   "-o", o);
     switch (kind) {
     case DebugBuild:
       nob_cmd_append(&cmd, DEBUG_FLAGS);
@@ -383,42 +387,101 @@ static int cmd_dynamic(BuildKind kind) {
   Nob_Cmd cmd = {0};
 
   nob_cmd_append(&cmd, CC, LNK_FLAGS, "-shared");
+
+  const char *version = manifest_get("version");
+  size_t len = strlen(version);
+  size_t count = 0;
+  for (size_t i = 0; i < len; ++i) {
+    if (version[i] == '.')
+      break;
+    count++;
+  }
+
+#ifndef __APPLE__
+  const char *obj;
+
   switch (kind) {
   case DebugBuild:
-    nob_cmd_append(&cmd, DEBUG_FLAGS, "-o", BUILD_DIR "/lib" NAME ".so");
+    nob_cmd_append(&cmd, DEBUG_FLAGS);
+    obj = BUILD_DIR "/lib" NAME "-debug.so";
     break;
   case ReleaseBuild:
-    nob_cmd_append(&cmd, RELEASE_FLAGS, "-o",
-                   BUILD_DIR "/lib" NAME "-release.so");
+    nob_cmd_append(&cmd, RELEASE_FLAGS,
+                   t("-Wl,-soname,lib" NAME ".so.%.*s", (int)count, version));
+    obj = t(BUILD_DIR "/lib" NAME ".so.%s", version);
     break;
   case TinyBuild:
-    nob_cmd_append(&cmd, SIZE_FLAGS, "-o", BUILD_DIR "/lib" NAME "-tiny.so");
+    nob_cmd_append(&cmd, SIZE_FLAGS);
+    obj = BUILD_DIR "/lib" NAME "-tiny.so";
     break;
   }
+
+  nob_cmd_append(&cmd, "-o", obj);
+
   nob_da_append_many(&cmd, objs.items, objs.count);
   if (!nob_cmd_run(&cmd))
     return EXIT_FAILURE;
 
-  switch (kind) {
-  case DebugBuild:
-    nob_log(NOB_INFO, "Built: " BUILD_DIR "/lib" NAME ".so");
-    break;
-  case ReleaseBuild:
-    nob_log(NOB_INFO, "Built: " BUILD_DIR "/lib" NAME "-release.so");
-    break;
-  case TinyBuild:
-    nob_log(NOB_INFO, "Built: " BUILD_DIR "/lib" NAME "-tiny.so");
-    break;
+  nob_log(NOB_INFO, "Built: %s", obj);
+
+  if (kind == ReleaseBuild) {
+    const char *full = t("lib" NAME ".so.%s", version);
+    const char *major = t("lib" NAME ".so.%.*s", (int)count, version);
+    const char *simple = "lib" NAME ".so";
+
+    if (strcmp(major, full) != 0) {
+      int ret = symlink(full, t(BUILD_DIR "/%s", major));
+      if (ret != 0)
+        fprintf(stderr, "could not create symlink: %s\n", strerror(errno));
+    }
+
+    if (strcmp(major, full) != 0) {
+      int ret = symlink(major, t(BUILD_DIR "/%s", simple));
+      if (ret != 0)
+        fprintf(stderr, "could not create symlink: %s\n", strerror(errno));
+    }
   }
+#endif
+  /* TODO: add apple support with  lib<lib>.<major>.<minor>.<patch>.dylib
+   * this needs to be built with -dynamiclib -install_name
+   */
+
+#ifdef __APPLE__
+#endif
 
   return EXIT_SUCCESS;
 }
 
 static int cmd_build(BuildKind kind) {
+  const char *prefix = getenv("PREFIX");
+  prefix = prefix == NULL ? "/usr/local" : prefix;
+  const char *pkgconfig = BUILD_DIR "/" NAME ".pc";
   if (cmd_static(kind) != EXIT_SUCCESS)
     return EXIT_FAILURE;
   if (cmd_dynamic(kind) != EXIT_SUCCESS)
     return EXIT_FAILURE;
+
+  FILE *f = fopen(pkgconfig, "w");
+  if (f == NULL) {
+    nob_log(NOB_ERROR, "Could not open %s: %s", pkgconfig, strerror(errno));
+    return EXIT_FAILURE;
+  }
+
+  fprintf(f,
+          "prefix=%s\n"
+          "exec_prefix=${prefix}\n"
+          "libdir=${exec_prefix}/lib\n"
+          "includedir=${prefix}/include\n"
+          "\n"
+          "Name: " NAME "\n"
+          "Description: %s\n"
+          "Version: %s\n"
+          "Cflags: -I${includedir}\n"
+          "Libs: -L${libdir} -l" NAME "\n",
+          // "Libs.private: -lotherlib\n"
+          prefix, manifest_get("description"), manifest_get("version"));
+  fclose(f);
+
   return EXIT_SUCCESS;
 }
 
@@ -448,7 +511,11 @@ static int cmd_test(void) {
     const char *out = t(BUILD_DIR "/" TEST_DIR "/%s", tname);
 
     Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, CC, BASE_FLAGS, "-I" TEST_DIR, "-g", "-O1", SAN_FLAGS);
+    nob_cmd_append(&cmd, CC, BASE_FLAGS, "-I" TEST_DIR,
+                   t("-DVERSION=\"%s\"", manifest_get("version")),
+                   t("-DDESCRIPTION=\"%s\"", manifest_get("description")),
+                   t("-DPROJECT_NAME=\"%s\"", manifest_get("name")), "-g",
+                   "-O1", SAN_FLAGS);
     nob_cmd_append(&cmd, tf);
     nob_da_append_many(&cmd, srcs.items, srcs.count);
     nob_cmd_append(&cmd, LNK_FLAGS, "-o", out);
