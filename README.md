@@ -1,7 +1,7 @@
 # Poki
 
 <div align="center">
-  <img src="../assets/logo.png" width="50%" alt="pictogram of a container">
+  <img src="https://tangled.org/stau.space/poki/raw/main/assets/logo.png" width="50%" alt="pictogram of a container">
 </div>
 
 
