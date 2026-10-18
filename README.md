@@ -1,7 +1,7 @@
 # Poki
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/lipu-linku/ijo/main/sitelenpona/static/poki-1.svg" width="50%" alt="pictogram of a container">
+  <img src="../assets/logo.png" width="50%" alt="pictogram of a container">
 </div>
 
 
