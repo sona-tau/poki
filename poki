@@ -25,6 +25,7 @@ emit "$PROJECT_DIRECTORY/project.toml" <<'END_OF_TEMPLATE'
 name = "@@NAME@@"
 version = "@@VERSION@@"
 description = "@@DESCRIPTION@@"
+author = "@@AUTHOR@@"
 END_OF_TEMPLATE
 
 emit "$PROJECT_DIRECTORY/flake.nix" <<'END_OF_TEMPLATE'
