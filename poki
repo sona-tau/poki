@@ -197,7 +197,7 @@ emit "$PROJECT_DIRECTORY/nob.c" <<'END_OF_TEMPLATE'
 #define SRC_DIR "src"
 #define INC_DIR "include"
 #define LIB_DIR "lib"
-#define TEST_DIR "tests"
+#define TEST_DIR "test"
 
 #define WARN_FLAGS                                                             \
   "-Wall", "-Wextra", "-Wfloat-equal", "-Wundef", "-Wshadow",                  \
@@ -312,7 +312,8 @@ static int build_objects(Nob_File_Paths *srcs, Nob_File_Paths *objs,
 
   for (size_t i = 0; i < srcs->count; ++i) {
     const char *src = srcs->items[i];
-    const char *obj = nob_temp_sprintf(BUILD_DIR "/%s.o", nob_path_name(src));
+    const char *obj = t(BUILD_DIR "/%s.o", nob_path_name(src));
+    printf("Building: %s -> %s\n", src, obj);
     /* strip ".c", add ".o" */
     size_t len = strlen(obj);
     char *o = nob_temp_strdup(obj);
@@ -422,7 +423,7 @@ static int cmd_build(BuildKind kind) {
 }
 
 static int cmd_test(void) {
-  if (!nob_mkdir_if_not_exists(BUILD_DIR "/tests"))
+  if (!nob_mkdir_if_not_exists(BUILD_DIR "/" TEST_DIR))
     return EXIT_FAILURE;
 
   Nob_File_Paths srcs = {0};
@@ -444,7 +445,7 @@ static int cmd_test(void) {
     printf("  %-30s", tname);
     fflush(stdout);
 
-    const char *out = nob_temp_sprintf(BUILD_DIR "/tests/%s", tname);
+    const char *out = t(BUILD_DIR "/" TEST_DIR "/%s", tname);
 
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, CC, BASE_FLAGS, "-I" TEST_DIR, "-g", "-O1", SAN_FLAGS);
@@ -475,7 +476,7 @@ static int cmd_test(void) {
 }
 
 static bool cmd_valgrind(void) {
-  if (!nob_mkdir_if_not_exists(BUILD_DIR "/tests"))
+  if (!nob_mkdir_if_not_exists(BUILD_DIR "/" TEST_DIR))
     return false;
 
   Nob_File_Paths srcs = {0};
@@ -493,7 +494,7 @@ static bool cmd_valgrind(void) {
     char tname[256];
     snprintf(tname, sizeof(tname), "%.*s-vg", (int)(blen - 2), base);
 
-    const char *out = nob_temp_sprintf(BUILD_DIR "/tests/%s", tname);
+    const char *out = t(BUILD_DIR "/" TEST_DIR "/%s", tname);
 
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, CC, BASE_FLAGS, "-I" TEST_DIR, "-g", "-O1");
@@ -735,7 +736,7 @@ static bool cmd_strace(void) {
     char tname[256];
     snprintf(tname, sizeof(tname), "%.*s-st", (int)(blen - 2), base);
 
-    const char *out = nob_temp_sprintf(BUILD_DIR "/tests/%s", tname);
+    const char *out = t(BUILD_DIR "/" TEST_DIR "/%s", tname);
 
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, CC, BASE_FLAGS, "-I" TEST_DIR, "-g", "-O1");
@@ -869,7 +870,7 @@ static void usage(const char *program) {
   fprintf(stderr, "  "          "  " "  "bold_text("debug")",            "bold_text("--debug")"               Build: debug info & assertions\n");
   fprintf(stderr, "  "          "  " "  "bold_text("static")",           "bold_text("--static")"              Build: " BUILD_DIR "/lib" NAME ".a\n");
   fprintf(stderr, "  "          "  " "  "bold_text("dynamic")",          "bold_text("--dynamic")"             Build: " BUILD_DIR "/lib" NAME ".so\n");
-  fprintf(stderr, "  "bold_text("-t")", "bold_text("test")",             "bold_text("--test")"                Test: tests/test_*.c\n");
+  fprintf(stderr, "  "bold_text("-t")", "bold_text("test")",             "bold_text("--test")"                Test: "TEST_DIR"/test_*.c\n");
   fprintf(stderr, "  "          "  " "  "bold_text("valgrind")",         "bold_text("--valgrind")"            Valgrind on tests: no sanitizers\n");
   fprintf(stderr, "  "          "  " "  "bold_text("strace")",           "bold_text("--strace")"              STrace on tests: no sanitizers\n");
   fprintf(stderr, "  "          "  " "  "bold_text("cppcheck")",         "bold_text("--cppcheck")"            cppcheck static analysis\n");
