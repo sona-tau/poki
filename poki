@@ -229,7 +229,8 @@ static bool is_c_file(const char *name) {
 }
 
 static bool is_test_c_file(const char *name) {
-  return is_c_file(name) && (strncmp(name, "test_", 5) == 0 || strncmp(name, "fuzz_", 5) == 0);
+  return is_c_file(name) &&
+         (strncmp(name, "test_", 5) == 0 || strncmp(name, "fuzz_", 5) == 0);
 }
 
 static bool is_ch_file(const char *name) {
@@ -255,7 +256,7 @@ static bool collect_files(const char *dir, FileFilter filter,
     if (filter && !filter(de.name))
       continue;
 
-    nob_da_append(paths, nob_temp_sprintf("%s/%s", dir, de.name));
+    nob_da_append(paths, t("%s/%s", dir, de.name));
   }
 
   bool ok = !de.error;
@@ -354,33 +355,17 @@ static int cmd_static(BuildKind kind) {
 
   Nob_Cmd cmd = {0};
   nob_cmd_append(&cmd, "gcc-ar", "rcs");
-  switch (kind) {
-  case DebugBuild:
-    nob_cmd_append(&cmd, BUILD_DIR "/lib" NAME ".a");
-    break;
-  case ReleaseBuild:
-    nob_cmd_append(&cmd, BUILD_DIR "/lib" NAME "-release.a");
-    break;
-  case TinyBuild:
-    nob_cmd_append(&cmd, BUILD_DIR "/lib" NAME "-tiny.a");
-    break;
-  }
+  const char *obj = kind == TinyBuild      ? BUILD_DIR "/lib" NAME "-tiny.a"
+                    : kind == ReleaseBuild ? BUILD_DIR "/lib" NAME ".a"
+                                           : BUILD_DIR "/lib" NAME "-tiny.a";
+
+  nob_cmd_append(&cmd, obj);
 
   nob_da_append_many(&cmd, objs.items, objs.count);
   if (!nob_cmd_run(&cmd))
     return EXIT_FAILURE;
 
-  switch (kind) {
-  case DebugBuild:
-    nob_log(NOB_INFO, "Built: " BUILD_DIR "/lib" NAME ".a");
-    break;
-  case ReleaseBuild:
-    nob_log(NOB_INFO, "Built: " BUILD_DIR "/lib" NAME "-release.a");
-    break;
-  case TinyBuild:
-    nob_log(NOB_INFO, "Built: " BUILD_DIR "/lib" NAME "-tiny.a");
-    break;
-  }
+  nob_log(NOB_INFO, "Built: %s", obj);
 
   return EXIT_SUCCESS;
 }
@@ -613,37 +598,33 @@ static int cmd_pack(const char *version, const char *prefix, BuildKind kind) {
     return EXIT_FAILURE;
   }
 
-  const char *root =
-      (prefix && *prefix) ? nob_temp_sprintf("%s/%s", stage, prefix) : stage;
+  const char *root = (prefix && *prefix) ? t("%s/%s", stage, prefix) : stage;
 
-  if (!nob_mkdir_if_not_exists(nob_temp_sprintf("%s/include", root)))
+  if (!nob_mkdir_if_not_exists(t("%s/include", root)))
     goto fail;
-  if (!nob_mkdir_if_not_exists(nob_temp_sprintf("%s/lib", root)))
+  if (!nob_mkdir_if_not_exists(t("%s/lib", root)))
     goto fail;
-  if (!nob_mkdir_if_not_exists(nob_temp_sprintf("%s/lib/static", root)))
+  if (!nob_mkdir_if_not_exists(t("%s/lib/static", root)))
     goto fail;
-  if (!nob_mkdir_if_not_exists(nob_temp_sprintf("%s/lib/dynamic", root)))
-    goto fail;
-
-  if (!nob_copy_directory_recursively(INC_DIR,
-                                      nob_temp_sprintf("%s/include", root)))
+  if (!nob_mkdir_if_not_exists(t("%s/lib/dynamic", root)))
     goto fail;
 
-  const char *a_name = (version && *version)
-                           ? nob_temp_sprintf("lib" NAME "-%s.a", version)
-                           : "lib" NAME ".a";
-  const char *so_name = (version && *version)
-                            ? nob_temp_sprintf("lib" NAME "-%s.so", version)
-                            : "lib" NAME ".so";
+  if (!nob_copy_directory_recursively(INC_DIR, t("%s/include", root)))
+    goto fail;
+
+  const char *a_name =
+      (version && *version) ? t("lib" NAME "-%s.a", version) : "lib" NAME ".a";
+  const char *so_name = (version && *version) ? t("lib" NAME "-%s.so", version)
+                                              : "lib" NAME ".so";
 
   if (nob_file_exists(BUILD_DIR "/lib" NAME ".a"))
     if (!nob_copy_file(BUILD_DIR "/lib" NAME ".a",
-                       nob_temp_sprintf("%s/lib/static/%s", root, a_name)))
+                       t("%s/lib/static/%s", root, a_name)))
       goto fail;
 
   if (nob_file_exists(BUILD_DIR "/lib" NAME ".so"))
     if (!nob_copy_file(BUILD_DIR "/lib" NAME ".so",
-                       nob_temp_sprintf("%s/lib/dynamic/%s", root, so_name)))
+                       t("%s/lib/dynamic/%s", root, so_name)))
       goto fail;
 
   {
@@ -711,10 +692,15 @@ static bool cmd_fuzz(void) {
     char tname[256];
     snprintf(tname, sizeof(tname), "%.*s", (int)(blen - 2), base);
 
-    const char *out = nob_temp_sprintf(BUILD_DIR "/fuzz/%s", tname);
+    const char *out = t(BUILD_DIR "/fuzz/%s", tname);
 
     Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, "/nix/store/xy32w323i90dlgscl5zbac0dyvgk7lig-clang-wrapper-21.1.8/bin/clang", BASE_FLAGS, "-I" TEST_DIR, "-g", "-O1", "-fsanitize=fuzzer,address,undefined");
+    nob_cmd_append(
+        &cmd,
+        "/nix/store/xy32w323i90dlgscl5zbac0dyvgk7lig-clang-wrapper-21.1.8/bin/"
+        "clang",
+        BASE_FLAGS, "-I" TEST_DIR, "-g", "-O1",
+        "-fsanitize=fuzzer,address,undefined");
     nob_cmd_append(&cmd, tf);
     nob_da_append_many(&cmd, srcs.items, srcs.count);
     nob_cmd_append(&cmd, LNK_FLAGS, "-o", out);
@@ -731,7 +717,7 @@ static bool cmd_fuzz(void) {
 
 static bool cmd_strace(void) {
   /* build each test without sanitizers — cleaner strace output */
-  if (!nob_mkdir_if_not_exists(BUILD_DIR "/tests"))
+  if (!nob_mkdir_if_not_exists(BUILD_DIR "/" TEST_DIR))
     return false;
 
   Nob_File_Paths srcs = {0};
