@@ -1,0 +1,20 @@
+# File: cog.toml
+pre_bump_hooks = [
+    "echo {{version}}",
+]
+
+
+post_bump_hooks = [
+    "git push",
+    "git push origin {{version}}",
+]
+
+[changelog]
+path = "CHANGELOG.md"
+template = "remote"
+remote = "soft"
+repository = "poki"
+owner = "sona"
+authors = [
+  { username = "sona", signature = "Sona Tau Estrada Rivera  <sona@stau.space>"}
+]
